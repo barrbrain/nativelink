@@ -76,6 +76,7 @@ pub fn store_factory<'a>(
             )?,
             StoreSpec::Dedup(spec) => DedupStore::new(
                 spec,
+                store_factory(&spec.lsh_store, store_manager, None).await?,
                 store_factory(&spec.index_store, store_manager, None).await?,
                 store_factory(&spec.content_store, store_manager, None).await?,
             )?,

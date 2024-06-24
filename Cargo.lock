@@ -18,6 +18,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 
 [[package]]
+name = "aehobak"
+version = "0.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54c8beff8b78e773544ba94f072f3c552efbedef5993607f5caf1ea20a8cc8e5"
+dependencies = [
+ "libsais-sys",
+ "streamvbyte64",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2280,6 +2290,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsais-sys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec495a2918bacd868428951b45b9b3fb9464840e2ac559462c4370d6fa2c404"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2732,6 +2751,7 @@ dependencies = [
 name = "nativelink-store"
 version = "0.7.0"
 dependencies = [
+ "aehobak",
  "async-lock",
  "async-trait",
  "aws-config",
@@ -2780,6 +2800,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tlsh2",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -4176,6 +4197,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "streamvbyte64"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9680297f5d33b5bf359514250eb88bf2e0f08d4863b296be71fb3f4d50c92c9"
+dependencies = [
+ "crunchy",
+ "num-traits",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4379,6 +4410,12 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tlsh2"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96c92ccae5fece4be87f4fe90187d5bf20837e7a50f14c1f664b4a86c97ea3e0"
 
 [[package]]
 name = "tokio"

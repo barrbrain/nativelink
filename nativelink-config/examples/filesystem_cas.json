@@ -40,6 +40,14 @@
             },
             "upper_store": {
               "dedup": {
+		"lsh_store": {
+                  "memory": {
+                    "eviction_policy": {
+                      // 10mb.
+                      "max_bytes": 10000000,
+                    }
+		  }
+		},
                 "index_store": {
                   // Since our index store is queried so much, we use a fast_slow
                   // store so it will keep in memory objects that are accessed
@@ -76,7 +84,6 @@
           }
         },
         "verify_size": true,
-        "hash_verification_function": "sha256"
       }
     },
     "AC_MAIN_STORE": {

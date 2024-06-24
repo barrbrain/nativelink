@@ -63,6 +63,7 @@ pub fn store_factory<'a>(
             )?,
             StoreConfig::dedup(config) => DedupStore::new(
                 config,
+                store_factory(&config.lsh_store, store_manager, None, None).await?,
                 store_factory(&config.index_store, store_manager, None, None).await?,
                 store_factory(&config.content_store, store_manager, None, None).await?,
             ),

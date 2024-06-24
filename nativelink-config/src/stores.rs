@@ -538,6 +538,10 @@ pub struct MemoryStore {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DedupStore {
+    /// Store used to store the locality-sensitive hash of each dedup slice.
+    /// This can only be MemoryStore at present.
+    pub lsh_store: StoreConfig,
+
     /// Store used to store the index of each dedup slice. This store
     /// should generally be fast and small.
     pub index_store: StoreConfig,

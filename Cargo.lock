@@ -2019,6 +2019,7 @@ dependencies = [
  "sha2",
  "shellexpand",
  "tempfile",
+ "tlsh2",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -3351,6 +3352,11 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tlsh2"
+version = "0.3.0"
+source = "git+https://github.com/barrbrain/tlsh?branch=fast-smol#442d49341342d10fb5905574e20f212d09a63c69"
 
 [[package]]
 name = "tokio"

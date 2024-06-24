@@ -176,6 +176,7 @@ impl StoreDriver for DedupStore {
         let index_entries = frame_reader
             .map(|r| r.err_tip(|| "Failed to decode frame from fast_cdc"))
             .map_ok(|frame| async move {
+                use tlsh2::TlshDefaultBuilder;
                 let hash = blake3::hash(&frame[..]).into();
                 let index_entry = DigestInfo::new(hash, frame.len() as i64);
                 if self
@@ -188,6 +189,14 @@ impl StoreDriver for DedupStore {
                     // If our store has this digest, we don't need to upload it.
                     return Result::<_, Error>::Ok(index_entry);
                 }
+                let tlsh = TlshDefaultBuilder::build_from(&frame[..])
+                    .map(|t| t.hash())
+                    .map(|h| {
+                        let mut packed = [0u8; 32];
+                        let _ = hex::decode_to_slice(&h[h.len() - 64..], packed.as_mut_slice());
+                        DigestInfo::new(packed, frame.len() as i64);
+                    });
+                event!(Level::INFO, ?index_entry, ?tlsh,);
                 self.content_store
                     .update_oneshot(index_entry, frame)
                     .await

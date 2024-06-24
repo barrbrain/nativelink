@@ -18,6 +18,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "512761e0bb2578dd7380c6baaa0f4ce03e84f95e960231d1dec8bf4d7d6e2627"
 
 [[package]]
+name = "aehobak"
+version = "0.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27d8b6209a1079027ca91396dc43a837e42ea27582797e2837bf7001b8382823"
+dependencies = [
+ "streamvbyte64",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -740,6 +749,12 @@ checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
 dependencies = [
  "tinyvec",
 ]
+
+[[package]]
+name = "bsdiff"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6709158fe6ca66c1f32eb27b4ae5997c67b0df350ae185831233af3e7a91213"
 
 [[package]]
 name = "bumpalo"
@@ -2367,6 +2382,7 @@ dependencies = [
 name = "nativelink-store"
 version = "0.6.0"
 dependencies = [
+ "aehobak",
  "async-lock",
  "async-trait",
  "aws-config",
@@ -2376,6 +2392,7 @@ dependencies = [
  "aws-smithy-types",
  "bincode",
  "blake3",
+ "bsdiff",
  "byteorder",
  "bytes",
  "bytes-utils",
@@ -2409,6 +2426,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tlsh2",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -3661,6 +3679,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "streamvbyte64"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9680297f5d33b5bf359514250eb88bf2e0f08d4863b296be71fb3f4d50c92c9"
+dependencies = [
+ "crunchy",
+ "num-traits",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3832,6 +3860,12 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tlsh2"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d1ca7b6482798eaf06ef6a4a5e1211e370758888698cfff4a53142441ef5143"
 
 [[package]]
 name = "tokio"

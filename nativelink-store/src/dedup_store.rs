@@ -42,13 +42,21 @@ const DEFAULT_NORM_SIZE: u64 = 256 * 1024;
 const DEFAULT_MAX_SIZE: u64 = 512 * 1024;
 const DEFAULT_MAX_CONCURRENT_FETCH_PER_GET: usize = 10;
 
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone, Copy)]
+pub enum DedupEntry {
+    Base(DigestInfo),
+    Delta(DigestInfo, DigestInfo, u64),
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Default, Clone)]
 pub struct DedupIndex {
-    pub entries: Vec<DigestInfo>,
+    pub entries: Vec<DedupEntry>,
 }
 
 #[derive(MetricsComponent)]
 pub struct DedupStore {
+    #[metric(group = "lsh_store")]
+    lsh_store: Store,
     #[metric(group = "index_store")]
     index_store: Store,
     #[metric(group = "content_store")]
@@ -76,6 +84,7 @@ impl core::fmt::Debug for DedupStore {
 impl DedupStore {
     pub fn new(
         spec: &DedupSpec,
+        lsh_store: Store,
         index_store: Store,
         content_store: Store,
     ) -> Result<Arc<Self>, Error> {
@@ -100,6 +109,7 @@ impl DedupStore {
             spec.max_concurrent_fetch_per_get as usize
         };
         Ok(Arc::new(Self {
+            lsh_store,
             index_store,
             content_store,
             fast_cdc_decoder: FastCDC::new(
@@ -142,11 +152,16 @@ impl DedupStore {
             }
         };
 
-        let digests: Vec<_> = index_entries
-            .entries
-            .into_iter()
-            .map(StoreKey::Digest)
-            .collect();
+        let mut digests: Vec<_> = Vec::with_capacity(index_entries.entries.len() * 2);
+        for index_entry in index_entries.entries {
+            match index_entry {
+                DedupEntry::Base(base_entry) => digests.push(base_entry.into()),
+                DedupEntry::Delta(base_entry, delta_entry, _) => {
+                    digests.push(base_entry.into());
+                    digests.push(delta_entry.into());
+                }
+            }
+        }
         let mut sum = 0;
         for size in self.content_store.has_many(&digests).await? {
             let Some(size) = size else {
@@ -210,13 +225,116 @@ impl StoreDriver for DedupStore {
                     .is_some()
                 {
                     // If our store has this digest, we don't need to upload it.
-                    return Result::<_, Error>::Ok(index_entry);
+                    return Result::<_, Error>::Ok(DedupEntry::Base(index_entry));
+                }
+                let tlsh_key = tlsh::build_key(&frame[..]);
+                if let Some(key) = tlsh_key.as_ref() {
+                    let mut maybe_best_key = None;
+                    let mut best_dist = 52 * 414 + 1;
+
+                    let (lower, upper) = tlsh::build_range(key);
+                    let range =
+                        StoreKey::new_str(lower.as_str())..=StoreKey::new_str(upper.as_str());
+                    drop(
+                        self.lsh_store
+                            .list(range, |candidate| {
+                                let dist = tlsh::code_distance_hex(
+                                    &key.as_bytes()[16..],
+                                    &candidate.as_str().as_bytes()[16..],
+                                );
+                                if dist < best_dist {
+                                    best_dist = dist;
+                                    maybe_best_key.replace(candidate.borrow().into_owned());
+                                }
+                                best_dist != 0
+                            })
+                            .await
+                            .inspect_err(|err| warn!(?err)),
+                    );
+
+                    if let Some(best_key) = maybe_best_key {
+                        if let Ok(data) = self
+                            .lsh_store
+                            .get_part_unchunked(best_key.clone(), 0, None)
+                            .await
+                            .err_tip(|| "Failed to read LSH store in dedup store")
+                            .inspect_err(|err| warn!(?err))
+                        {
+                            if let Ok(base_entry) = self
+                                .bincode_options
+                                .deserialize::<DigestInfo>(&data)
+                                .map_err(|e| {
+                                    make_err!(
+                                        Code::Internal,
+                                        "Failed to deserialize LSH entry in dedup_store : {:?}",
+                                        e
+                                    )
+                                })
+                                .inspect_err(|err| warn!(?err))
+                            {
+                                if let Ok(data) = self
+                                    .content_store
+                                    .get_part_unchunked(StoreKey::Digest(base_entry), 0, None)
+                                    .await
+                                    .inspect_err(|err| warn!(?err))
+                                {
+                                    let mut delta = Vec::new();
+                                    {
+                                        let mut raw = Vec::with_capacity(frame.len());
+                                        bsdiff::diff(&data, &frame, &mut raw)?;
+                                        aehobak::encode(&raw, &mut delta)?;
+                                    }
+                                    let hash = blake3::hash(&delta[..]).into();
+                                    let delta_entry = DigestInfo::new(hash, delta.len() as u64);
+                                    let delta_stored = self
+                                        .content_store
+                                        .update_oneshot(delta_entry, delta.into())
+                                        .await
+                                        .err_tip(|| "Failed to update content store in dedup_store")
+                                        .inspect_err(|err| warn!(?err))
+                                        .is_ok();
+                                    if delta_stored {
+                                        return Result::<_, Error>::Ok(DedupEntry::Delta(
+                                            base_entry,
+                                            delta_entry,
+                                            index_entry.size_bytes(),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 self.content_store
                     .update_oneshot(index_entry, frame)
                     .await
                     .err_tip(|| "Failed to update content store in dedup_store")?;
-                Ok(index_entry)
+                if let Some(key) = tlsh_key.as_ref() {
+                    if let Ok(serialized_entry) = self
+                        .bincode_options
+                        .serialize(&index_entry)
+                        .map_err(|e| {
+                            make_err!(
+                                Code::Internal,
+                                "Failed to serialize LSH entry in dedup_store : {:?}",
+                                e
+                            )
+                        })
+                        .inspect_err(|err| warn!(?err))
+                    {
+                        drop(
+                            self.lsh_store
+                                .update_oneshot(
+                                    StoreKey::new_str(key.as_str()),
+                                    serialized_entry.into(),
+                                )
+                                .await
+                                .err_tip(|| "Failed to update LSH store in dedup_store")
+                                .inspect_err(|err| warn!(?err)),
+                        );
+                    }
+                }
+                Ok(DedupEntry::Base(index_entry))
             })
             .try_buffered(self.max_concurrent_fetch_per_get)
             .try_collect()
@@ -286,7 +404,10 @@ impl StoreDriver for DedupStore {
                 let mut entries = Vec::with_capacity(index_entries.entries.len());
                 for entry in index_entries.entries {
                     let first_byte = current_entries_sum;
-                    let entry_size = entry.size_bytes();
+                    let entry_size = match entry {
+                        DedupEntry::Base(base_entry) => base_entry.size_bytes(),
+                        DedupEntry::Delta(_, _, size_bytes) => size_bytes,
+                    };
                     current_entries_sum += entry_size;
                     // Filter any items who's end byte is before the first requested byte.
                     if current_entries_sum <= offset {
@@ -315,13 +436,32 @@ impl StoreDriver for DedupStore {
         // `spec.max_size * spec.max_concurrent_fetch_per_get` per `get_part()` request.
         let mut entries_stream = stream::iter(entries)
             .map(move |index_entry| async move {
-                let data = self
-                    .content_store
-                    .get_part_unchunked(index_entry, 0, None)
-                    .await
-                    .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
+                match index_entry {
+                    DedupEntry::Base(base_entry) => {
+                        let data = self
+                            .content_store
+                            .get_part_unchunked(base_entry, 0, None)
+                            .await
+                            .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
 
-                Result::<_, Error>::Ok(data)
+                        Result::<_, Error>::Ok(data)
+                    }
+                    DedupEntry::Delta(base_entry, delta_entry, size_bytes) => {
+                        let base = self
+                            .content_store
+                            .get_part_unchunked(base_entry, 0, None)
+                            .await
+                            .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
+                        let delta = self
+                            .content_store
+                            .get_part_unchunked(delta_entry, 0, None)
+                            .await
+                            .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
+                        let mut data = Vec::with_capacity(size_bytes.try_into()?);
+                        aehobak::patch(&base, delta.as_ref(), &mut data)?;
+                        Result::<_, Error>::Ok(data.into())
+                    }
+                }
             })
             .buffered(self.max_concurrent_fetch_per_get);
 
@@ -371,6 +511,79 @@ impl StoreDriver for DedupStore {
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn core::any::Any + Sync + Send + 'static> {
         self
     }
+}
+
+mod tlsh {
+    use std::string::String;
+
+    use tlsh2::TlshDefaultBuilder;
+
+    pub(super) fn build_key(frame: &[u8]) -> Option<String> {
+        TlshDefaultBuilder::build_from(frame)
+            .map(|t| t.hash())
+            .map(|h| {
+                let mut key = [0u8; 80];
+                let p = build_prefix(&h[..]);
+                let _ = hex::encode_to_slice(p, &mut key[..8]);
+                for b in &mut key[..8] {
+                    b.make_ascii_uppercase();
+                }
+                key[8..].copy_from_slice(&h[..]);
+                String::from_utf8(key.into()).unwrap()
+            })
+    }
+
+    pub(super) fn build_range(key: &str) -> (String, String) {
+        let mut lower = key.to_owned();
+        lower.truncate(10);
+        lower.push_str("0000000000000000000000000000000000000000000000000000000000000000000000");
+        let mut upper = key.to_owned();
+        upper.truncate(10);
+        upper.push_str("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+        (lower, upper)
+    }
+
+    const fn safe_unhex(b: u8) -> usize {
+        ((b >> 6) * 9).wrapping_add(b) as usize & 15
+    }
+
+    fn build_prefix(tlsh: &[u8]) -> [u8; 4] {
+        let mut prefix: u32 = 0;
+        for b in &tlsh[tlsh.len() - 32..] {
+            prefix = (!prefix << 1) | (0x777 >> safe_unhex(*b)) & 1;
+        }
+        prefix.to_be_bytes()
+    }
+
+    pub(super) fn code_distance_hex(x: &[u8], y: &[u8]) -> u32 {
+        x.iter()
+            .zip(y.iter())
+            .map(|(a, b)| {
+                u32::from(HEX_DIFF_VALUE[HEX_DIFF_INDEX[safe_unhex(*a)][safe_unhex(*b)] as usize])
+            })
+            .sum()
+    }
+
+    const HEX_DIFF_VALUE: [u16; 10] = [0, 414, 828, 941, 1355, 1882, 1995, 2409, 2936, 3990];
+
+    const HEX_DIFF_INDEX: [[u8; 16]; 16] = [
+        [0, 1, 3, 6, 1, 2, 4, 7, 3, 4, 5, 8, 6, 7, 8, 9],
+        [1, 0, 1, 3, 2, 1, 2, 4, 4, 3, 4, 5, 7, 6, 7, 8],
+        [3, 1, 0, 1, 4, 2, 1, 2, 5, 4, 3, 4, 8, 7, 6, 7],
+        [6, 3, 1, 0, 7, 4, 2, 1, 8, 5, 4, 3, 9, 8, 7, 6],
+        [1, 2, 4, 7, 0, 1, 3, 6, 1, 2, 4, 7, 3, 4, 5, 8],
+        [2, 1, 2, 4, 1, 0, 1, 3, 2, 1, 2, 4, 4, 3, 4, 5],
+        [4, 2, 1, 2, 3, 1, 0, 1, 4, 2, 1, 2, 5, 4, 3, 4],
+        [7, 4, 2, 1, 6, 3, 1, 0, 7, 4, 2, 1, 8, 5, 4, 3],
+        [3, 4, 5, 8, 1, 2, 4, 7, 0, 1, 3, 6, 1, 2, 4, 7],
+        [4, 3, 4, 5, 2, 1, 2, 4, 1, 0, 1, 3, 2, 1, 2, 4],
+        [5, 4, 3, 4, 4, 2, 1, 2, 3, 1, 0, 1, 4, 2, 1, 2],
+        [8, 5, 4, 3, 7, 4, 2, 1, 6, 3, 1, 0, 7, 4, 2, 1],
+        [6, 7, 8, 9, 3, 4, 5, 8, 1, 2, 4, 7, 0, 1, 3, 6],
+        [7, 6, 7, 8, 4, 3, 4, 5, 2, 1, 2, 4, 1, 0, 1, 3],
+        [8, 7, 6, 7, 5, 4, 3, 4, 4, 2, 1, 2, 3, 1, 0, 1],
+        [9, 8, 7, 6, 8, 5, 4, 3, 7, 4, 2, 1, 6, 3, 1, 0],
+    ];
 }
 
 default_health_status_indicator!(DedupStore);

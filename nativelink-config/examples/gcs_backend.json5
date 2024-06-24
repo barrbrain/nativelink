@@ -5,6 +5,14 @@
       verify: {
         backend: {
           dedup: {
+            lsh_store: {
+              memory: {
+                eviction_policy: {
+                  // 10mb.
+                  max_bytes: 10000000,
+                },
+              },
+            },
             index_store: {
               fast_slow: {
                 fast: {

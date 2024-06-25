@@ -194,11 +194,15 @@ impl StoreDriver for DedupStore {
                 let tlsh_key = tlsh::build_key(&frame[..]);
                 event!(Level::INFO, ?index_entry, ?tlsh_key,);
                 if let Some(key) = tlsh_key.as_ref() {
+                    let mut maybe_base_entry: Option<DigestInfo> = None;
+                    let mut maybe_delta_entry: Option<DigestInfo> = None;
+
+                    let mut best_keys = vec![];
+                    let mut best_dist = 36 * 414 + 1;
+
                     let (lower, upper) = tlsh::build_range(key);
                     let range =
                         StoreKey::new_str(lower.as_str())..=StoreKey::new_str(upper.as_str());
-                    let mut best_keys = vec![];
-                    let mut best_dist = u32::MAX;
                     self.lsh_store
                         .list(range, |candidate| {
                             let dist = tlsh::code_distance_hex(
@@ -213,7 +217,42 @@ impl StoreDriver for DedupStore {
                         })
                         .await
                         .unwrap();
-                    event!(Level::INFO, ?key, ?best_keys, ?best_dist);
+
+                    if let Some(best_key) = best_keys.last() {
+                        event!(Level::INFO, ?key, ?best_key, ?best_dist);
+                        let data = self
+                            .lsh_store
+                            .get_part_unchunked(best_key.to_owned(), 0, None)
+                            .await
+                            .err_tip(|| "Failed to read LSH store in dedup store")?;
+                        let base_entry = self
+                            .bincode_options
+                            .deserialize::<DigestInfo>(&data)
+                            .map_err(|e| {
+                                make_err!(
+                                    Code::Internal,
+                                    "Failed to deserialize LSH entry in dedup_store : {:?}",
+                                    e
+                                )
+                            })?;
+
+                        if let Ok(data) = self
+                            .content_store
+                            .get_part_unchunked(StoreKey::Digest(base_entry), 0, None)
+                            .await
+                        {
+                            let mut delta = Vec::with_capacity(frame.len());
+                            qbsdiff::Bsdiff::new(&data[..], &frame[..])
+                                .compare(std::io::Cursor::new(&mut delta))
+                                .unwrap();
+                            let hash = blake3::hash(&delta[..]).into();
+                            let delta_entry = DigestInfo::new(hash, delta.len() as i64);
+                            maybe_base_entry = Some(base_entry);
+                            maybe_delta_entry = Some(delta_entry);
+                            event!(Level::INFO, ?index_entry, ?maybe_base_entry, ?maybe_delta_entry);
+                        }
+                    }
+
                     let serialized_entry =
                         self.bincode_options.serialize(&index_entry).map_err(|e| {
                             make_err!(

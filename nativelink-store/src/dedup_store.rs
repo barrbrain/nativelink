@@ -44,6 +44,7 @@ pub struct DedupIndex {
 }
 
 pub struct DedupStore {
+    lsh_store: Store,
     index_store: Store,
     content_store: Store,
     fast_cdc_decoder: FastCDC,
@@ -54,6 +55,7 @@ pub struct DedupStore {
 impl DedupStore {
     pub fn new(
         config: &nativelink_config::stores::DedupStore,
+        lsh_store: Store,
         index_store: Store,
         content_store: Store,
     ) -> Arc<Self> {
@@ -78,6 +80,7 @@ impl DedupStore {
             config.max_concurrent_fetch_per_get as usize
         };
         Arc::new(Self {
+            lsh_store,
             index_store,
             content_store,
             fast_cdc_decoder: FastCDC::new(min_size, normal_size, max_size),
@@ -176,7 +179,6 @@ impl StoreDriver for DedupStore {
         let index_entries = frame_reader
             .map(|r| r.err_tip(|| "Failed to decode frame from fast_cdc"))
             .map_ok(|frame| async move {
-                use tlsh2::TlshDefaultBuilder;
                 let hash = blake3::hash(&frame[..]).into();
                 let index_entry = DigestInfo::new(hash, frame.len() as i64);
                 if self
@@ -189,14 +191,42 @@ impl StoreDriver for DedupStore {
                     // If our store has this digest, we don't need to upload it.
                     return Result::<_, Error>::Ok(index_entry);
                 }
-                let tlsh = TlshDefaultBuilder::build_from(&frame[..])
-                    .map(|t| t.hash())
-                    .map(|h| {
-                        let mut packed = [0u8; 32];
-                        let _ = hex::decode_to_slice(&h[h.len() - 64..], packed.as_mut_slice());
-                        DigestInfo::new(packed, frame.len() as i64);
-                    });
-                event!(Level::INFO, ?index_entry, ?tlsh,);
+                let tlsh_key = tlsh::build_key(&frame[..]);
+                event!(Level::INFO, ?index_entry, ?tlsh_key,);
+                if let Some(key) = tlsh_key.as_ref() {
+                    let (lower, upper) = tlsh::build_range(key);
+                    let range =
+                        StoreKey::new_str(lower.as_str())..=StoreKey::new_str(upper.as_str());
+                    let mut best_keys = vec![];
+                    let mut best_dist = u32::MAX;
+                    self.lsh_store
+                        .list(range, |candidate| {
+                            let dist = tlsh::code_distance_hex(
+                                &key.as_bytes()[25..],
+                                &candidate.as_str().as_bytes()[25..],
+                            );
+                            if dist < best_dist {
+                                best_dist = dist;
+                                best_keys.push(candidate.borrow().into_owned())
+                            }
+                            true
+                        })
+                        .await
+                        .unwrap();
+                    event!(Level::INFO, ?key, ?best_keys, ?best_dist);
+                    let serialized_entry =
+                        self.bincode_options.serialize(&index_entry).map_err(|e| {
+                            make_err!(
+                                Code::Internal,
+                                "Failed to serialize LSH entry in dedup_store : {:?}",
+                                e
+                            )
+                        })?;
+                    self.lsh_store
+                        .update_oneshot(StoreKey::new_str(key.as_str()), serialized_entry.into())
+                        .await
+                        .err_tip(|| "Failed to update LSH store in dedup_store")?;
+                }
                 self.content_store
                     .update_oneshot(index_entry, frame)
                     .await
@@ -355,6 +385,82 @@ impl StoreDriver for DedupStore {
     fn as_any_arc(self: Arc<Self>) -> Arc<dyn std::any::Any + Sync + Send + 'static> {
         self
     }
+}
+
+mod tlsh {
+    use std::string::String;
+
+    use tlsh2::TlshDefaultBuilder;
+
+    pub fn build_key(frame: &[u8]) -> Option<String> {
+        TlshDefaultBuilder::build_from(frame)
+            .map(|t| t.hash())
+            .map(|h| {
+                let mut key = [0u8; 89];
+                let p = build_prefix(&h[40..]);
+                let _ = hex::encode_to_slice(p, &mut key[..16]);
+                key[16] = b':';
+                key[17..].copy_from_slice(&h[..]);
+                String::from_utf8(key.into()).unwrap()
+            })
+    }
+
+    pub fn build_range(key: &str) -> (String, String) {
+        let mut lower = key.to_owned();
+        lower.truncate(19);
+        lower.push_str("0000000000000000000000000000000000000000000000000000000000000000000000");
+        let mut upper = key.to_owned();
+        upper.truncate(19);
+        upper.push_str("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+        (lower, upper)
+    }
+
+    #[inline(always)]
+    const fn safe_unhex(b: u8) -> usize {
+        ((b >> 6) * 9).wrapping_add(b) as usize & 15
+    }
+
+    fn build_prefix(tlsh: &[u8]) -> [u8; 8] {
+        let code: &[u8; 32] = tlsh.try_into().unwrap();
+        let mut hash = 0u64;
+        for b in code {
+            hash <<= 2;
+            hash += HEX_QUADS_ARE_3[safe_unhex(*b)] as u64;
+        }
+        hash.to_be_bytes()
+    }
+
+    pub fn code_distance_hex(x: &[u8], y: &[u8]) -> u32 {
+        x.iter()
+            .zip(y.iter())
+            .map(|(a, b)| {
+                HEX_DIFF_VALUE[HEX_DIFF_INDEX[safe_unhex(*a)][safe_unhex(*b)] as usize] as u32
+            })
+            .sum()
+    }
+
+    const HEX_QUADS_ARE_3: [u8; 16] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 2, 2, 3];
+
+    const HEX_DIFF_VALUE: [u16; 10] = [0, 414, 828, 941, 1355, 1882, 1995, 2409, 2936, 3990];
+
+    const HEX_DIFF_INDEX: [[u8; 16]; 16] = [
+        [0, 1, 3, 6, 1, 2, 4, 7, 3, 4, 5, 8, 6, 7, 8, 9],
+        [1, 0, 1, 3, 2, 1, 2, 4, 4, 3, 4, 5, 7, 6, 7, 8],
+        [3, 1, 0, 1, 4, 2, 1, 2, 5, 4, 3, 4, 8, 7, 6, 7],
+        [6, 3, 1, 0, 7, 4, 2, 1, 8, 5, 4, 3, 9, 8, 7, 6],
+        [1, 2, 4, 7, 0, 1, 3, 6, 1, 2, 4, 7, 3, 4, 5, 8],
+        [2, 1, 2, 4, 1, 0, 1, 3, 2, 1, 2, 4, 4, 3, 4, 5],
+        [4, 2, 1, 2, 3, 1, 0, 1, 4, 2, 1, 2, 5, 4, 3, 4],
+        [7, 4, 2, 1, 6, 3, 1, 0, 7, 4, 2, 1, 8, 5, 4, 3],
+        [3, 4, 5, 8, 1, 2, 4, 7, 0, 1, 3, 6, 1, 2, 4, 7],
+        [4, 3, 4, 5, 2, 1, 2, 4, 1, 0, 1, 3, 2, 1, 2, 4],
+        [5, 4, 3, 4, 4, 2, 1, 2, 3, 1, 0, 1, 4, 2, 1, 2],
+        [8, 5, 4, 3, 7, 4, 2, 1, 6, 3, 1, 0, 7, 4, 2, 1],
+        [6, 7, 8, 9, 3, 4, 5, 8, 1, 2, 4, 7, 0, 1, 3, 6],
+        [7, 6, 7, 8, 4, 3, 4, 5, 2, 1, 2, 4, 1, 0, 1, 3],
+        [8, 7, 6, 7, 5, 4, 3, 4, 4, 2, 1, 2, 3, 1, 0, 1],
+        [9, 8, 7, 6, 8, 5, 4, 3, 7, 4, 2, 1, 6, 3, 1, 0],
+    ];
 }
 
 default_health_status_indicator!(DedupStore);

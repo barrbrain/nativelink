@@ -38,9 +38,15 @@ const DEFAULT_NORM_SIZE: usize = 256 * 1024;
 const DEFAULT_MAX_SIZE: usize = 512 * 1024;
 const DEFAULT_MAX_CONCURRENT_FETCH_PER_GET: usize = 10;
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub enum DedupEntry {
+    Base(DigestInfo),
+    Delta(DigestInfo, DigestInfo, i64),
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Default, Clone)]
 pub struct DedupIndex {
-    pub entries: Vec<DigestInfo>,
+    pub entries: Vec<DedupEntry>,
 }
 
 pub struct DedupStore {
@@ -123,13 +129,21 @@ impl DedupStore {
             }
         };
 
-        let digests: Vec<_> = index_entries
-            .entries
-            .into_iter()
-            .map(|index_entry| {
-                DigestInfo::new(index_entry.packed_hash, index_entry.size_bytes).into()
-            })
-            .collect();
+        let mut digests: Vec<_> = Vec::with_capacity(index_entries.entries.len() * 2);
+        for index_entry in index_entries.entries.into_iter() {
+            match index_entry {
+                DedupEntry::Base(base_entry) => digests
+                    .push(DigestInfo::new(base_entry.packed_hash, base_entry.size_bytes).into()),
+                DedupEntry::Delta(base_entry, delta_entry, _) => {
+                    digests.push(
+                        DigestInfo::new(base_entry.packed_hash, base_entry.size_bytes).into(),
+                    );
+                    digests.push(
+                        DigestInfo::new(delta_entry.packed_hash, delta_entry.size_bytes).into(),
+                    );
+                }
+            }
+        }
         let mut sum = 0;
         for size in self.content_store.has_many(&digests).await? {
             let Some(size) = size else {
@@ -189,14 +203,11 @@ impl StoreDriver for DedupStore {
                     .is_some()
                 {
                     // If our store has this digest, we don't need to upload it.
-                    return Result::<_, Error>::Ok(index_entry);
+                    return Result::<_, Error>::Ok(DedupEntry::Base(index_entry));
                 }
                 let tlsh_key = tlsh::build_key(&frame[..]);
                 event!(Level::INFO, ?index_entry, ?tlsh_key,);
                 if let Some(key) = tlsh_key.as_ref() {
-                    let mut maybe_base_entry: Option<DigestInfo> = None;
-                    let mut maybe_delta_entry: Option<DigestInfo> = None;
-
                     let mut best_keys = vec![];
                     let mut best_dist = 36 * 414 + 1;
 
@@ -251,41 +262,33 @@ impl StoreDriver for DedupStore {
                                 .update_oneshot(delta_entry, delta.into())
                                 .await
                                 .err_tip(|| "Failed to update content store in dedup_store")?;
-
-                            maybe_base_entry = Some(base_entry);
-                            maybe_delta_entry = Some(delta_entry);
-                            event!(
-                                Level::INFO,
-                                ?index_entry,
-                                ?maybe_base_entry,
-                                ?maybe_delta_entry
-                            );
+                            event!(Level::INFO, ?index_entry, ?base_entry, ?delta_entry);
+                            return Result::<_, Error>::Ok(DedupEntry::Delta(
+                                base_entry,
+                                delta_entry,
+                                index_entry.size_bytes,
+                            ));
                         }
                     }
 
-                    if maybe_base_entry.is_none() || maybe_delta_entry.is_none() {
-                        let serialized_entry =
-                            self.bincode_options.serialize(&index_entry).map_err(|e| {
-                                make_err!(
-                                    Code::Internal,
-                                    "Failed to serialize LSH entry in dedup_store : {:?}",
-                                    e
-                                )
-                            })?;
-                        self.lsh_store
-                            .update_oneshot(
-                                StoreKey::new_str(key.as_str()),
-                                serialized_entry.into(),
+                    let serialized_entry =
+                        self.bincode_options.serialize(&index_entry).map_err(|e| {
+                            make_err!(
+                                Code::Internal,
+                                "Failed to serialize LSH entry in dedup_store : {:?}",
+                                e
                             )
-                            .await
-                            .err_tip(|| "Failed to update LSH store in dedup_store")?;
-                    }
+                        })?;
+                    self.lsh_store
+                        .update_oneshot(StoreKey::new_str(key.as_str()), serialized_entry.into())
+                        .await
+                        .err_tip(|| "Failed to update LSH store in dedup_store")?;
                 }
                 self.content_store
                     .update_oneshot(index_entry, frame)
                     .await
                     .err_tip(|| "Failed to update content store in dedup_store")?;
-                Ok(index_entry)
+                Ok(DedupEntry::Base(index_entry))
             })
             .try_buffered(self.max_concurrent_fetch_per_get)
             .try_collect()
@@ -355,8 +358,11 @@ impl StoreDriver for DedupStore {
                 let mut entries = Vec::with_capacity(index_entries.entries.len());
                 for entry in index_entries.entries {
                     let first_byte = current_entries_sum;
-                    let entry_size = usize::try_from(entry.size_bytes)
-                        .err_tip(|| "Failed to convert to usize in DedupStore")?;
+                    let entry_size = usize::try_from(match entry {
+                        DedupEntry::Base(base_entry) => base_entry.size_bytes,
+                        DedupEntry::Delta(_, _, size_bytes) => size_bytes,
+                    })
+                    .err_tip(|| "Failed to convert to usize in DedupStore")?;
                     current_entries_sum += entry_size;
                     // Filter any items who's end byte is before the first requested byte.
                     if current_entries_sum <= offset {
@@ -385,13 +391,33 @@ impl StoreDriver for DedupStore {
         // `config.max_size * config.max_concurrent_fetch_per_get` per `get_part()` request.
         let mut entries_stream = stream::iter(entries)
             .map(move |index_entry| async move {
-                let data = self
-                    .content_store
-                    .get_part_unchunked(index_entry, 0, None)
-                    .await
-                    .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
+                match index_entry {
+                    DedupEntry::Base(base_entry) => {
+                        let data = self
+                            .content_store
+                            .get_part_unchunked(base_entry, 0, None)
+                            .await
+                            .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
 
-                Result::<_, Error>::Ok(data)
+                        Result::<_, Error>::Ok(data)
+                    }
+                    DedupEntry::Delta(base_entry, delta_entry, size_bytes) => {
+                        let base = self
+                            .content_store
+                            .get_part_unchunked(base_entry, 0, None)
+                            .await
+                            .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
+                        let delta = self
+                            .content_store
+                            .get_part_unchunked(delta_entry, 0, None)
+                            .await
+                            .err_tip(|| "Failed to get_part in content_store in dedup_store")?;
+                        let mut data = Vec::with_capacity(size_bytes.try_into()?);
+                        let patcher = qbsdiff::Bspatch::new(delta.as_ref())?;
+                        patcher.apply(base.as_ref(), std::io::Cursor::new(&mut data))?;
+                        Result::<_, Error>::Ok(data.into())
+                    }
+                }
             })
             .buffered(self.max_concurrent_fetch_per_get);
 

@@ -247,24 +247,39 @@ impl StoreDriver for DedupStore {
                                 .unwrap();
                             let hash = blake3::hash(&delta[..]).into();
                             let delta_entry = DigestInfo::new(hash, delta.len() as i64);
+                            self.content_store
+                                .update_oneshot(delta_entry, delta.into())
+                                .await
+                                .err_tip(|| "Failed to update content store in dedup_store")?;
+
                             maybe_base_entry = Some(base_entry);
                             maybe_delta_entry = Some(delta_entry);
-                            event!(Level::INFO, ?index_entry, ?maybe_base_entry, ?maybe_delta_entry);
+                            event!(
+                                Level::INFO,
+                                ?index_entry,
+                                ?maybe_base_entry,
+                                ?maybe_delta_entry
+                            );
                         }
                     }
 
-                    let serialized_entry =
-                        self.bincode_options.serialize(&index_entry).map_err(|e| {
-                            make_err!(
-                                Code::Internal,
-                                "Failed to serialize LSH entry in dedup_store : {:?}",
-                                e
+                    if maybe_base_entry.is_none() || maybe_delta_entry.is_none() {
+                        let serialized_entry =
+                            self.bincode_options.serialize(&index_entry).map_err(|e| {
+                                make_err!(
+                                    Code::Internal,
+                                    "Failed to serialize LSH entry in dedup_store : {:?}",
+                                    e
+                                )
+                            })?;
+                        self.lsh_store
+                            .update_oneshot(
+                                StoreKey::new_str(key.as_str()),
+                                serialized_entry.into(),
                             )
-                        })?;
-                    self.lsh_store
-                        .update_oneshot(StoreKey::new_str(key.as_str()), serialized_entry.into())
-                        .await
-                        .err_tip(|| "Failed to update LSH store in dedup_store")?;
+                            .await
+                            .err_tip(|| "Failed to update LSH store in dedup_store")?;
+                    }
                 }
                 self.content_store
                     .update_oneshot(index_entry, frame)

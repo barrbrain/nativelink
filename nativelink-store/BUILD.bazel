@@ -57,6 +57,7 @@ rust_library(
         "@crates//:lz4_flex",
         "@crates//:parking_lot",
         "@crates//:prost",
+        "@crates//:qbsdiff",
         "@crates//:rand",
         "@crates//:redis",
         "@crates//:serde",

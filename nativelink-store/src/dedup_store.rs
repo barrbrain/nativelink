@@ -476,21 +476,21 @@ mod tlsh {
         TlshDefaultBuilder::build_from(frame)
             .map(|t| t.hash())
             .map(|h| {
-                let mut key = [0u8; 89];
+                let mut key = [0u8; 85];
                 let p = build_prefix(&h[40..]);
-                let _ = hex::encode_to_slice(p, &mut key[..16]);
-                key[16] = b':';
-                key[17..].copy_from_slice(&h[..]);
+                let _ = hex::encode_to_slice(&p[2..], &mut key[..12]);
+                key[12] = b':';
+                key[13..].copy_from_slice(&h[..]);
                 String::from_utf8(key.into()).unwrap()
             })
     }
 
     pub fn build_range(key: &str) -> (String, String) {
         let mut lower = key.to_owned();
-        lower.truncate(19);
+        lower.truncate(15);
         lower.push_str("0000000000000000000000000000000000000000000000000000000000000000000000");
         let mut upper = key.to_owned();
-        upper.truncate(19);
+        upper.truncate(15);
         upper.push_str("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
         (lower, upper)
     }

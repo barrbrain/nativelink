@@ -24,6 +24,9 @@ use rand::{Rng, SeedableRng};
 
 fn make_default_config() -> nativelink_config::stores::DedupStore {
     nativelink_config::stores::DedupStore {
+        lsh_store: nativelink_config::stores::StoreConfig::memory(
+            nativelink_config::stores::MemoryStore::default(),
+        ),
         index_store: nativelink_config::stores::StoreConfig::memory(
             nativelink_config::stores::MemoryStore::default(),
         ),
@@ -54,6 +57,9 @@ async fn simple_round_trip_test() -> Result<(), Error> {
         &make_default_config(),
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
+        )), // LSH store.
+        Store::new(MemoryStore::new(
+            &nativelink_config::stores::MemoryStore::default(),
         )), // Index store.
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
@@ -82,6 +88,9 @@ async fn check_missing_last_chunk_test() -> Result<(), Error> {
     let content_store = MemoryStore::new(&nativelink_config::stores::MemoryStore::default());
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(MemoryStore::new(
+            &nativelink_config::stores::MemoryStore::default(),
+        )), // LSH store.
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
         )), // Index store.
@@ -130,6 +139,9 @@ async fn fetch_part_test() -> Result<(), Error> {
         &make_default_config(),
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
+        )), // LSH store.
+        Store::new(MemoryStore::new(
+            &nativelink_config::stores::MemoryStore::default(),
         )), // Index store.
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
@@ -169,6 +181,9 @@ async fn check_length_not_set_with_chunk_read_beyond_first_chunk_regression_test
 ) -> Result<(), Error> {
     let store = DedupStore::new(
         &nativelink_config::stores::DedupStore {
+            lsh_store: nativelink_config::stores::StoreConfig::memory(
+                nativelink_config::stores::MemoryStore::default(),
+            ),
             index_store: nativelink_config::stores::StoreConfig::memory(
                 nativelink_config::stores::MemoryStore::default(),
             ),
@@ -180,6 +195,9 @@ async fn check_length_not_set_with_chunk_read_beyond_first_chunk_regression_test
             max_size: 7,
             max_concurrent_fetch_per_get: 10,
         },
+        Store::new(MemoryStore::new(
+            &nativelink_config::stores::MemoryStore::default(),
+        )), // LSH store.
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
         )), // Index store.
@@ -221,6 +239,9 @@ async fn check_length_not_set_with_chunk_read_beyond_first_chunk_regression_test
 async fn check_chunk_boundary_reads_test() -> Result<(), Error> {
     let store = DedupStore::new(
         &nativelink_config::stores::DedupStore {
+            lsh_store: nativelink_config::stores::StoreConfig::memory(
+                nativelink_config::stores::MemoryStore::default(),
+            ),
             index_store: nativelink_config::stores::StoreConfig::memory(
                 nativelink_config::stores::MemoryStore::default(),
             ),
@@ -232,6 +253,9 @@ async fn check_chunk_boundary_reads_test() -> Result<(), Error> {
             max_size: 7,
             max_concurrent_fetch_per_get: 10,
         },
+        Store::new(MemoryStore::new(
+            &nativelink_config::stores::MemoryStore::default(),
+        )), // LSH store.
         Store::new(MemoryStore::new(
             &nativelink_config::stores::MemoryStore::default(),
         )), // Index store.
@@ -297,6 +321,7 @@ async fn check_chunk_boundary_reads_test() -> Result<(), Error> {
 /// content items exist instead of just checking the entry in the index store.
 #[nativelink_test]
 async fn has_checks_content_store() -> Result<(), Error> {
+    let lsh_store = MemoryStore::new(&nativelink_config::stores::MemoryStore::default());
     let index_store = MemoryStore::new(&nativelink_config::stores::MemoryStore::default());
     let content_store = MemoryStore::new(&nativelink_config::stores::MemoryStore {
         eviction_policy: Some(nativelink_config::stores::EvictionPolicy {
@@ -307,6 +332,7 @@ async fn has_checks_content_store() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(lsh_store.clone()),
         Store::new(index_store.clone()),
         Store::new(content_store.clone()),
     );
@@ -358,6 +384,7 @@ async fn has_checks_content_store() -> Result<(), Error> {
 /// properly return None.
 #[nativelink_test]
 async fn has_with_no_existing_index_returns_none_test() -> Result<(), Error> {
+    let lsh_store = MemoryStore::new(&nativelink_config::stores::MemoryStore::default());
     let index_store = MemoryStore::new(&nativelink_config::stores::MemoryStore::default());
     let content_store = MemoryStore::new(&nativelink_config::stores::MemoryStore {
         eviction_policy: Some(nativelink_config::stores::EvictionPolicy {
@@ -368,6 +395,7 @@ async fn has_with_no_existing_index_returns_none_test() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(lsh_store.clone()),
         Store::new(index_store.clone()),
         Store::new(content_store.clone()),
     );

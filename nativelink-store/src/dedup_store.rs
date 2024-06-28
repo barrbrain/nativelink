@@ -217,8 +217,8 @@ impl StoreDriver for DedupStore {
                     self.lsh_store
                         .list(range, |candidate| {
                             let dist = tlsh::code_distance_hex(
-                                &key.as_bytes()[25..],
-                                &candidate.as_str().as_bytes()[25..],
+                                &key.as_bytes()[20..],
+                                &candidate.as_str().as_bytes()[20..],
                             );
                             if dist < best_dist {
                                 best_dist = dist;
@@ -476,21 +476,23 @@ mod tlsh {
         TlshDefaultBuilder::build_from(frame)
             .map(|t| t.hash())
             .map(|h| {
-                let mut key = [0u8; 85];
-                let p = build_prefix(&h[40..]);
-                let _ = hex::encode_to_slice(&p[2..], &mut key[..12]);
-                key[12] = b':';
-                key[13..].copy_from_slice(&h[..]);
+                let mut key = [0u8; 80];
+                let p = build_prefix(&h[..]);
+                let _ = hex::encode_to_slice(p, &mut key[..8]);
+                for b in &mut key[..8] {
+                    b.make_ascii_uppercase();
+                }
+                key[8..].copy_from_slice(&h[..]);
                 String::from_utf8(key.into()).unwrap()
             })
     }
 
     pub fn build_range(key: &str) -> (String, String) {
         let mut lower = key.to_owned();
-        lower.truncate(15);
+        lower.truncate(10);
         lower.push_str("0000000000000000000000000000000000000000000000000000000000000000000000");
         let mut upper = key.to_owned();
-        upper.truncate(15);
+        upper.truncate(10);
         upper.push_str("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
         (lower, upper)
     }
@@ -500,14 +502,19 @@ mod tlsh {
         ((b >> 6) * 9).wrapping_add(b) as usize & 15
     }
 
-    fn build_prefix(tlsh: &[u8]) -> [u8; 8] {
-        let code: &[u8; 32] = tlsh.try_into().unwrap();
-        let mut hash = 0u64;
-        for b in code {
-            hash <<= 2;
-            hash += HEX_QUADS_ARE_3[safe_unhex(*b)] as u64;
+    fn build_prefix(tlsh: &[u8]) -> [u8; 4] {
+        let (mut low, mut high) = (0u64, u64::MAX >> 4);
+        for b in tlsh.iter().rev() {
+            let s = HEX_QUADS_ARE_3[safe_unhex(*b)] as usize & 3;
+            let (m1, m2) = (HEX_QUADS_CDF[s] as u64, HEX_QUADS_CDF[s + 1] as u64);
+            let diff = high.wrapping_sub(low);
+            high = low.wrapping_add(m2.wrapping_mul(diff) >> 4);
+            low = low.wrapping_add(m1.wrapping_mul(diff) >> 4);
+            if high ^ low < (1 << 28) {
+                break;
+            }
         }
-        hash.to_be_bytes()
+        ((low >> 28) as u32).to_be_bytes()
     }
 
     pub fn code_distance_hex(x: &[u8], y: &[u8]) -> u32 {
@@ -520,6 +527,8 @@ mod tlsh {
     }
 
     const HEX_QUADS_ARE_3: [u8; 16] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 2, 2, 2, 3];
+
+    const HEX_QUADS_CDF: [u8; 5] = [0, 9, 12, 15, 16];
 
     const HEX_DIFF_VALUE: [u16; 10] = [0, 414, 828, 941, 1355, 1882, 1995, 2409, 2936, 3990];
 

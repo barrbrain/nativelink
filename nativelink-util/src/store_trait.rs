@@ -158,6 +158,19 @@ pub enum StoreKey<'a> {
     Digest(DigestInfo),
 }
 
+impl mlua::UserData for StoreKey<'_> {}
+
+impl mlua::FromLua for StoreKey<'_> {
+    fn from_lua(value: mlua::Value, _lua: &mlua::Lua) -> std::result::Result<Self, mlua::Error> {
+        value
+            .as_userdata()
+            .map(|ud| ud.borrow::<StoreKey<'_>>().ok())
+            .flatten()
+            .map(|r| r.clone())
+            .ok_or_else(|| mlua::Error::runtime(&"Not a StoreKey"))
+    }
+}
+
 impl<'a> StoreKey<'a> {
     /// Creates a new store key from a string.
     pub const fn new_str(s: &'a str) -> Self {

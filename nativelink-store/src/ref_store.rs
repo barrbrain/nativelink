@@ -151,3 +151,21 @@ impl StoreDriver for RefStore {
 }
 
 default_health_status_indicator!(RefStore);
+
+use mlua::prelude::*;
+
+impl LuaUserData for RefStore {
+    fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
+        fields.add_field_method_get("name", |_, this| Ok(this.ref_store_name.clone()));
+    }
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_async_method("has", |_lua, this, key| async move {
+            let keys = [key];
+            let mut results = [None];
+            this.has_with_results(&keys, &mut results)
+                .await
+                .map_err(|_| mlua::Error::runtime(&"NativeLink error"))?;
+            Ok(results[0])
+        });
+    }
+}

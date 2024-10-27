@@ -104,6 +104,9 @@ struct Args {
     /// Config file to use.
     #[clap(value_parser)]
     config_file: String,
+    /// Lua script to run.
+    #[clap(value_parser)]
+    lua_file: String,
 }
 
 /// The root metrics collector struct. All metrics will be
@@ -939,10 +942,50 @@ async fn inner_main(
         root_metrics.write().workers = worker_metrics;
     }
 
+    let lua = mlua::Lua::new();
+    {
+        let store_manager = store_manager.clone();
+        let get_store = lua.create_function(move |_, name: String| {
+            store_manager
+                .get_store(&name)
+                .map(|_store| {
+                    Arc::into_inner(nativelink_store::ref_store::RefStore::new(
+                        &nativelink_config::stores::RefStore { name: name.clone() },
+                        Arc::downgrade(&store_manager),
+                    ))
+                    .unwrap()
+                })
+                .ok_or_else(|| mlua::Error::runtime(&"Store not found"))
+        })?;
+        use nativelink_util::common::DigestInfo;
+        use nativelink_util::store_trait::StoreKey;
+        let storekey = lua.create_function(|_, (hash, length): (String, usize)| {
+            let digest = DigestInfo::try_new(&hash, length)
+                .map_err(|_| mlua::Error::runtime(&"Invalid digest"))?;
+            Ok(StoreKey::Digest(digest))
+        })?;
+        let globals = lua.globals();
+        globals.set("get_store", get_store)?;
+        globals.set("storekey", storekey)?;
+        // local store = get_store("CAS_MAIN_STORE")
+        // print(store.name)
+        // local key = storekey("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824", 5)
+        // print(key)
+        // for i = 1, 10, 1 do print(store:has(key)) end
+        // print("done")
+        let script = futures::executor::block_on(get_lua())?;
+        let f = lua.load(script).into_function()?;
+        root_futures.push(Box::pin(
+            f.call_async(())
+                .map_err(|_| Error::new(Code::Internal, "".to_string())),
+        ));
+    }
+
     if let Err(e) = select_all(root_futures).await.0 {
         panic!("{e:?}");
     }
-    unreachable!("None of the futures should resolve in main()");
+    // unreachable!("None of the futures should resolve in main()");
+    Ok(())
 }
 
 async fn get_config() -> Result<CasConfig, Box<dyn std::error::Error>> {
@@ -952,6 +995,12 @@ async fn get_config() -> Result<CasConfig, Box<dyn std::error::Error>> {
             .err_tip(|| format!("Could not open config file {}", args.config_file))?,
     )?;
     Ok(serde_json5::from_str(&json_contents)?)
+}
+
+async fn get_lua() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let args = Args::parse();
+    Ok(std::fs::read(&args.lua_file)
+        .err_tip(|| format!("Could not open Lua script {}", args.lua_file))?)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

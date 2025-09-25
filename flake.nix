@@ -149,7 +149,7 @@
             CARGO_BUILD_TARGET = targetArch;
           }
           // (pkgs.lib.optionalAttrs isLinuxTarget {
-            CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+            CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static -C target-cpu=x86-64-v3";
             ${linkerEnvVar} = linkerPath;
           });
 

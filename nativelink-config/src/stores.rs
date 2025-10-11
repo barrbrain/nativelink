@@ -666,6 +666,10 @@ pub struct MemorySpec {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct DedupSpec {
+    /// Store used to store the locality-sensitive hash of each dedup slice.
+    /// This can only be `MemoryStore` or `RedisStore` at present.
+    pub lsh_store: StoreSpec,
+
     /// Store used to store the index of each dedup slice. This store
     /// should generally be fast and small.
     pub index_store: StoreSpec,
@@ -1162,6 +1166,12 @@ pub struct RedisSpec {
     /// Default: 10000
     #[serde(default, deserialize_with = "convert_numeric_with_shellexpand")]
     pub scan_count: u32,
+
+    /// The position to split keys at, when hash-splitting is enabled.
+    ///
+    /// Default: 0 (No split)
+    #[serde(default, deserialize_with = "convert_numeric_with_shellexpand")]
+    pub hash_split_pos: usize,
 
     /// Retry configuration to use when a network request fails.
     /// See the `Retry` struct for more information.

@@ -49,7 +49,7 @@ fred = { version = "10.1.0", default-features = false, features = [
   "sentinel-client",
   "sha-1",
   "subscriber-client",
-] }
+], git = "https://github.com/barrbrain/fred.rs", branch = "main" }
 futures = { version = "0.3.31", default-features = false }
 gcloud-auth = { version = "1.1.2", default-features = false }
 gcloud-storage = { version = "1.1.1", default-features = false, features = [

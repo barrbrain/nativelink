@@ -53,7 +53,9 @@ uuid = { version = "1.16.0", default-features = false, features = [
 [dev-dependencies]
 nativelink-macro = { path = "../nativelink-macro" }
 
-fred = { version = "10.1.0", default-features = false, features = ["mocks"] }
+fred = { version = "10.1.0", default-features = false, features = [
+  "mocks",
+], git = "https://github.com/barrbrain/fred.rs", branch = "main" }
 pretty_assertions = { version = "1.4.1", features = [
   "std",
 ], default-features = false }

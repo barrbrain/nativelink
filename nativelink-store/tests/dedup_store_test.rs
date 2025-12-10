@@ -26,6 +26,7 @@ use rand::{Rng, SeedableRng};
 
 fn make_default_config() -> DedupSpec {
     DedupSpec {
+        lsh_store: StoreSpec::Memory(MemorySpec::default()),
         index_store: StoreSpec::Memory(MemorySpec::default()),
         content_store: StoreSpec::Memory(MemorySpec::default()),
         min_size: 8 * 1024,
@@ -50,6 +51,7 @@ const MEGABYTE_SZ: usize = 1024 * 1024;
 async fn simple_round_trip_test() -> Result<(), Error> {
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(MemoryStore::new(&MemorySpec::default())), // LSH store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Index store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Content store.
     )?;
@@ -81,6 +83,7 @@ async fn check_missing_last_chunk_test() -> Result<(), Error> {
     let content_store = MemoryStore::new(&MemorySpec::default());
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(MemoryStore::new(&MemorySpec::default())), // LSH store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Index store.
         Store::new(content_store.clone()),
     )?;
@@ -123,6 +126,7 @@ async fn fetch_part_test() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(MemoryStore::new(&MemorySpec::default())), // LSH store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Index store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Content store.
     )?;
@@ -161,6 +165,7 @@ async fn check_length_not_set_with_chunk_read_beyond_first_chunk_regression_test
 
     let store = DedupStore::new(
         &DedupSpec {
+            lsh_store: StoreSpec::Memory(MemorySpec::default()),
             index_store: StoreSpec::Memory(MemorySpec::default()),
             content_store: StoreSpec::Memory(MemorySpec::default()),
             min_size: 5,
@@ -168,6 +173,7 @@ async fn check_length_not_set_with_chunk_read_beyond_first_chunk_regression_test
             max_size: 7,
             max_concurrent_fetch_per_get: 10,
         },
+        Store::new(MemoryStore::new(&MemorySpec::default())), // LSH store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Index store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Content store.
     )?;
@@ -206,6 +212,7 @@ async fn check_chunk_boundary_reads_test() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &DedupSpec {
+            lsh_store: StoreSpec::Memory(MemorySpec::default()),
             index_store: StoreSpec::Memory(MemorySpec::default()),
             content_store: StoreSpec::Memory(MemorySpec::default()),
             min_size: 5,
@@ -213,6 +220,7 @@ async fn check_chunk_boundary_reads_test() -> Result<(), Error> {
             max_size: 7,
             max_concurrent_fetch_per_get: 10,
         },
+        Store::new(MemoryStore::new(&MemorySpec::default())), // LSH store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Index store.
         Store::new(MemoryStore::new(&MemorySpec::default())), // Content store.
     )?;
@@ -278,6 +286,7 @@ async fn check_chunk_boundary_reads_test() -> Result<(), Error> {
 async fn has_checks_content_store() -> Result<(), Error> {
     const DATA_SIZE: usize = MEGABYTE_SZ / 4;
 
+    let lsh_store = MemoryStore::new(&MemorySpec::default());
     let index_store = MemoryStore::new(&MemorySpec::default());
     let content_store = MemoryStore::new(&MemorySpec {
         eviction_policy: Some(nativelink_config::stores::EvictionPolicy {
@@ -288,6 +297,7 @@ async fn has_checks_content_store() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(lsh_store.clone()),
         Store::new(index_store.clone()),
         Store::new(content_store.clone()),
     )?;
@@ -343,6 +353,7 @@ async fn has_checks_content_store() -> Result<(), Error> {
 async fn has_with_no_existing_index_returns_none_test() -> Result<(), Error> {
     const DATA_SIZE: usize = 10;
 
+    let lsh_store = MemoryStore::new(&MemorySpec::default());
     let index_store = MemoryStore::new(&MemorySpec::default());
     let content_store = MemoryStore::new(&MemorySpec {
         eviction_policy: Some(nativelink_config::stores::EvictionPolicy {
@@ -353,6 +364,7 @@ async fn has_with_no_existing_index_returns_none_test() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(lsh_store.clone()),
         Store::new(index_store.clone()),
         Store::new(content_store.clone()),
     )?;
@@ -374,6 +386,7 @@ async fn has_with_no_existing_index_returns_none_test() -> Result<(), Error> {
 /// properly return Some(0).
 #[nativelink_test]
 async fn has_with_zero_digest_returns_some_test() -> Result<(), Error> {
+    let lsh_store = MemoryStore::new(&MemorySpec::default());
     let index_store = MemoryStore::new(&MemorySpec::default());
     let content_store = MemoryStore::new(&MemorySpec {
         eviction_policy: Some(nativelink_config::stores::EvictionPolicy {
@@ -384,6 +397,7 @@ async fn has_with_zero_digest_returns_some_test() -> Result<(), Error> {
 
     let store = DedupStore::new(
         &make_default_config(),
+        Store::new(lsh_store.clone()),
         Store::new(index_store.clone()),
         Store::new(content_store.clone()),
     )?;

@@ -9,6 +9,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aehobak"
+version = "0.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "147badc350a1224bae2de72906cd8009e198641f8c651620c54af63e9a06f9aa"
+dependencies = [
+ "anyhow",
+ "libsais-sys",
+ "streamvbyte64",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2200,6 +2211,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsais-sys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec495a2918bacd868428951b45b9b3fb9464840e2ac559462c4370d6fa2c404"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2676,6 +2696,7 @@ dependencies = [
 name = "nativelink-store"
 version = "0.7.10"
 dependencies = [
+ "aehobak",
  "async-lock",
  "async-trait",
  "aws-config",
@@ -2727,6 +2748,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tlsh2",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -4097,6 +4119,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "streamvbyte64"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9680297f5d33b5bf359514250eb88bf2e0f08d4863b296be71fb3f4d50c92c9"
+dependencies = [
+ "crunchy",
+ "num-traits",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4288,6 +4320,12 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tlsh2"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7184dfffa0d05e10284df327c6cb52f0d62c5aa6c9a8b9236fa151d4361882f1"
 
 [[package]]
 name = "token-source"
